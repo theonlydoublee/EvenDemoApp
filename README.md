@@ -15,6 +15,20 @@ Before running the app, you need to configure the following API keys and credent
 
 3. **Google Cloud Credentials**: Configure a Google Cloud credential JSON file for voice-to-text functionality on Android. Place the credentials file in `android/app/src/main/assets/google-cloud-credentials.json`.
 
+## How To Connect
+
+1. Tap on "Not Connected"
+
+2. Glasses will show up under "Manage Notifications Whitelist"
+
+3. Tap the found glasses and connect
+
+4. Tap menu button in top right and go into "Weather"
+
+5. Press "Update Weather": Location will be grabbed then weather API will be called.  Weather and time data is sent to glasses.  Adjust settings per preference
+
+6. Check "Display Settings" to make any changes and press the corresponding "Apply" button to send to glasses.  Some settings do query the glasses to show you current settings.
+
 ## Changes and Added Features
 
 This section documents all the major changes and new features that have been added to the original Even Realities demo app.
