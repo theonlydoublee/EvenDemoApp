@@ -116,20 +116,23 @@ class WeatherService {
       );
       
       if (permission == LocationPermission.denied) {
-        if (useLastKnown) {
-          print('WeatherService: Location permission denied, trying last known position');
-          try {
-            final lastKnown = await Geolocator.getLastKnownPosition();
-            if (lastKnown != null) {
-              return lastKnown;
+        print('WeatherService: Location permission denied, requesting permission...');
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          if (useLastKnown) {
+            print('WeatherService: Location permission denied after request, trying last known position');
+            try {
+              final lastKnown = await Geolocator.getLastKnownPosition();
+              if (lastKnown != null) {
+                return lastKnown;
+              }
+              throw Exception('Location permissions are denied and no last known position available.');
+            } catch (e) {
+              throw Exception('Location permissions are denied.');
             }
-            throw Exception('Location permissions are denied and no last known position available.');
-          } catch (e) {
-            throw Exception('Location permissions are denied.');
           }
+          throw Exception('Location permissions are denied.');
         }
-        // Don't request permission in background - this will fail
-        throw Exception('Location permissions are denied.');
       }
 
       if (permission == LocationPermission.deniedForever) {
@@ -147,15 +150,35 @@ class WeatherService {
         }
         throw Exception('Location permissions are permanently denied. Please enable them in app settings.');
       }
+      
+      // Check background location permission for Android 10+ (API 29+)
+      // Note: This is a runtime check, the permission is declared in manifest
+      if (permission == LocationPermission.whileInUse) {
+        print('WeatherService: Only while-in-use permission granted. Background location may not work.');
+        // Continue anyway - the system will handle it
+      }
 
       // Get current position with timeout
+      // Force fresh location by checking timestamp and retrying if stale
       final accuracy = _getLocationAccuracy();
       print('WeatherService: Requesting current position with accuracy: ${_locationAccuracy.name} (${accuracy.name})...');
-      return await Geolocator.getCurrentPosition(
+      
+      // Configure location settings for background location updates
+      // This ensures the geolocator service can get location even in background
+      final locationSettings = LocationSettings(
+        accuracy: accuracy,
+        distanceFilter: 0, // Get any location update, don't filter by distance
+        timeLimit: const Duration(seconds: 30), // Time limit for getting location
+      );
+      
+      // Request current position with location settings and increased timeout
+      // This is especially important when foreground service is active in background
+      Position position = await Geolocator.getCurrentPosition(
+        locationSettings: locationSettings,
         desiredAccuracy: accuracy,
-        timeLimit: const Duration(seconds: 10), // 10 second timeout
+        timeLimit: const Duration(seconds: 30), // Increased timeout for GPS fix in background
       ).timeout(
-        const Duration(seconds: 15), // Overall 15 second timeout
+        const Duration(seconds: 35), // Overall 35 second timeout
         onTimeout: () {
           print('WeatherService: getCurrentPosition timed out, trying last known position');
           if (useLastKnown) {
@@ -164,6 +187,52 @@ class WeatherService {
           throw Exception('Getting current location timed out. Please try again.');
         },
       );
+      
+      // Verify the position is fresh (not cached) - check if timestamp is recent (within last 60 seconds)
+      final positionAge = DateTime.now().difference(position.timestamp ?? DateTime.now());
+      print('WeatherService: Position timestamp age: ${positionAge.inSeconds}s');
+      
+      // If position is stale and we don't want last known, try to get a fresh one
+      if (positionAge.inSeconds > 60 && !useLastKnown) {
+        print('WeatherService: WARNING - Position is ${positionAge.inSeconds}s old (may be cached), retrying for fresh location...');
+        try {
+          // Retry to get a fresh location with location settings
+          final retryLocationSettings = LocationSettings(
+            accuracy: accuracy,
+            distanceFilter: 0,
+            timeLimit: const Duration(seconds: 20),
+          );
+          final freshPosition = await Geolocator.getCurrentPosition(
+            locationSettings: retryLocationSettings,
+            desiredAccuracy: accuracy,
+            timeLimit: const Duration(seconds: 20),
+          ).timeout(
+            const Duration(seconds: 25),
+            onTimeout: () {
+              print('WeatherService: Retry for fresh location timed out');
+              throw TimeoutException('Getting fresh location timed out');
+            },
+          );
+          
+          final freshAge = DateTime.now().difference(freshPosition.timestamp ?? DateTime.now());
+          if (freshAge.inSeconds <= 60) {
+            print('WeatherService: Got fresh position on retry: ${freshPosition.latitude}, ${freshPosition.longitude} (${freshAge.inSeconds}s old)');
+            return freshPosition;
+          } else {
+            print('WeatherService: Retry also returned stale position (${freshAge.inSeconds}s old), using original');
+            return position;
+          }
+        } catch (e) {
+          print('WeatherService: Retry failed: $e, using original position');
+          return position;
+        }
+      } else if (positionAge.inSeconds <= 60) {
+        print('WeatherService: Position is fresh (${positionAge.inSeconds}s old): ${position.latitude}, ${position.longitude}');
+      } else {
+        print('WeatherService: Position is ${positionAge.inSeconds}s old but useLastKnown=true, using it');
+      }
+      
+      return position;
     } on TimeoutException {
       if (useLastKnown) {
         print('WeatherService: Timeout getting current position, using last known position');
@@ -497,16 +566,35 @@ class WeatherService {
           print('WeatherService: Last known position timestamp: ${lastKnown.timestamp} (${age.inMinutes} minutes ago)');
           print('WeatherService: Last known position accuracy: ${lastKnown.accuracy}m');
           
-          // Use last known position if it's less than 1 hour old, otherwise try to get fresh location
-          if (age.inHours < 1) {
-            print('WeatherService: Last known position is recent enough (${age.inMinutes} minutes old), using it');
-            position = lastKnown!; // Safe because we checked != null above
-          } else {
-            print('WeatherService: Last known position is old (${age.inHours} hours), attempting to get fresh location...');
-            // Try to get current position with a short timeout
+          // When foreground service is active, always try to get fresh location first
+          // Only use last known if it's very recent (< 5 minutes) or if fresh location fails
+          if (age.inMinutes < 5) {
+            print('WeatherService: Last known position is very recent (${age.inMinutes} minutes old), but foreground service is active - trying fresh location first...');
+            // Still try to get fresh location even if last known is recent
             try {
               position = await getCurrentLocation(useLastKnown: false).timeout(
-                const Duration(seconds: 5), // Short timeout for background
+                const Duration(seconds: 30), // Give time for GPS fix with foreground service
+                onTimeout: () {
+                  print('WeatherService: Getting fresh position timed out, using recent last known position');
+                  throw TimeoutException('Getting current position timed out');
+                },
+              );
+              print('WeatherService: Successfully got fresh current position: ${position.latitude}, ${position.longitude}');
+            } on TimeoutException {
+              // Timeout occurred, use recent last known position
+              print('WeatherService: Using recent last known position due to timeout');
+              position = lastKnown!; // Safe because we checked != null above
+            } catch (e) {
+              print('WeatherService: Failed to get current position: $e, using recent last known position');
+              // Fall back to last known position
+              position = lastKnown!; // Safe because we checked != null above
+            }
+          } else {
+            print('WeatherService: Last known position is old (${age.inMinutes} minutes old), attempting to get fresh location...');
+            // Try to get current position with longer timeout when foreground service is active
+            try {
+              position = await getCurrentLocation(useLastKnown: false).timeout(
+                const Duration(seconds: 35), // Longer timeout for GPS fix with foreground service
                 onTimeout: () {
                   print('WeatherService: Getting current position timed out, will use old last known position');
                   throw TimeoutException('Getting current position timed out');
@@ -526,35 +614,66 @@ class WeatherService {
         } else {
           // No last known position available at all
           print('WeatherService: No last known position available in system');
-          // Try to get current position with a short timeout (may not work in background)
-          print('WeatherService: Attempting to get current position (may not work in background)...');
+          // Try to get current position with longer timeout when foreground service is active
+          print('WeatherService: Attempting to get current position (foreground service should enable this in background)...');
           try {
+            // Use longer timeout since foreground service is active
             position = await getCurrentLocation(useLastKnown: false).timeout(
-              const Duration(seconds: 5), // Short timeout for background
+              const Duration(seconds: 35), // Longer timeout to allow GPS fix with foreground service
               onTimeout: () {
-                print('WeatherService: Getting current position timed out (likely due to background restrictions)');
-                throw TimeoutException('Cannot get location in background. Please open app in foreground first to get location.');
+                print('WeatherService: Getting current position timed out after 35s (foreground service may not be sufficient)');
+                throw TimeoutException('Cannot get location in background. Please ensure location services are enabled and GPS has a fix.');
               },
             );
             print('WeatherService: Successfully got current position: ${position.latitude}, ${position.longitude}');
           } catch (e) {
             print('WeatherService: Failed to get any location: $e');
             // If we can't get any location, throw an error with helpful message
-            throw Exception('Cannot get location data in background. Please open the app in foreground to get initial location. Error: $e');
+            throw Exception('Cannot get location data in background. Please ensure location services are enabled and GPS has a fix. Error: $e');
           }
         }
       } else {
         // Try to get current location first (user wants fresh location)
-        print('WeatherService: Getting current location (fresh location requested)...');
+        // When foreground service is active, we should be able to get fresh location even in background
+        print('WeatherService: Getting current location (fresh location requested, foreground service should be active)...');
         try {
+          // Request fresh location with longer timeout to allow GPS to get a fix
           position = await getCurrentLocation(useLastKnown: false).timeout(
-            const Duration(seconds: 8), // 8 second timeout for getting current location
+            const Duration(seconds: 25), // Increased timeout to allow GPS fix in background
             onTimeout: () {
-              print('WeatherService: Getting current location timed out after 8 seconds');
+              print('WeatherService: Getting current location timed out after 25 seconds');
               throw TimeoutException('Getting current location timed out');
             },
           );
-          print('WeatherService: Successfully got current position: ${position.latitude}, ${position.longitude}');
+          
+          // Verify position is fresh (within last 60 seconds for background)
+          final positionAge = DateTime.now().difference(position.timestamp ?? DateTime.now());
+          if (positionAge.inSeconds > 60) {
+            print('WeatherService: WARNING - Position is ${positionAge.inSeconds}s old, may be cached. Requesting again...');
+            // Try one more time to get a fresh location
+            try {
+              final freshPosition = await getCurrentLocation(useLastKnown: false).timeout(
+                const Duration(seconds: 15),
+                onTimeout: () {
+                  print('WeatherService: Second attempt to get fresh location timed out');
+                  throw TimeoutException('Getting fresh location timed out');
+                },
+              );
+              final freshAge = DateTime.now().difference(freshPosition.timestamp ?? DateTime.now());
+              if (freshAge.inSeconds <= 60) {
+                print('WeatherService: Got fresh position on second attempt: ${freshPosition.latitude}, ${freshPosition.longitude} (${freshAge.inSeconds}s old)');
+                position = freshPosition;
+              } else {
+                print('WeatherService: Second attempt also returned stale position (${freshAge.inSeconds}s old), using it anyway');
+                position = freshPosition;
+              }
+            } catch (e2) {
+              print('WeatherService: Second attempt failed: $e2, using first position');
+              // Use the first position even if it's stale
+            }
+          } else {
+            print('WeatherService: Successfully got fresh current position: ${position.latitude}, ${position.longitude} (${positionAge.inSeconds}s old)');
+          }
         } catch (e) {
           print('WeatherService: Failed to get current location: $e');
           // If getting current location fails, try last known position as fallback

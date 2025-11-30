@@ -5,9 +5,11 @@ import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter/services.dart';
 
 class WeatherController extends GetxController {
   final WeatherService _weatherService = WeatherService();
+  static const MethodChannel _methodChannel = MethodChannel('method.bluetooth');
 
   // Observable state
   var isLoading = false.obs;
@@ -221,6 +223,29 @@ class WeatherController extends GetxController {
     }
   }
 
+  /// Start foreground service to enable location updates in background
+  Future<void> _startForegroundService() async {
+    try {
+      await _methodChannel.invokeMethod('startForegroundService');
+      print('WeatherController: Foreground service started for location updates');
+    } catch (e) {
+      print('WeatherController: Error starting foreground service: $e');
+    }
+  }
+
+  /// Show notification when location is updated in background
+  Future<void> _showLocationUpdateNotification(String message, bool usedCached) async {
+    try {
+      await _methodChannel.invokeMethod('showWeatherNotification', {
+        'message': message,
+        'usedCached': usedCached,
+      });
+      print('WeatherController: Location update notification sent: $message (cached=$usedCached)');
+    } catch (e) {
+      print('WeatherController: Error showing location update notification: $e');
+    }
+  }
+
   /// Fetch weather for current location and send to glasses
   /// [silent]: If true, don't set error messages (for auto-updates)
   Future<void> fetchAndSendWeather({bool silent = false}) async {
@@ -240,25 +265,93 @@ class WeatherController extends GetxController {
     }
 
     try {
-      print('fetchAndSendWeather: Fetching weather data...');
+      print('fetchAndSendWeather: Starting weather update process...');
       final isInBackground = BleManager.get().isAppInBackground();
-      final hasCachedLocation = _hasCachedLocation;
-      final cachedAge = _cachedLocationAge;
-      print(
-        'fetchAndSendWeather: isInBackground=$isInBackground, hasCachedLocation=$hasCachedLocation'
-        '${cachedAge != null ? ', cachedAge=${cachedAge.inMinutes}m' : ''}',
-      );
+      
+      // Always start foreground service during weather updates to ensure location can be obtained
+      // This is especially important in background, but also helps in foreground
+      print('fetchAndSendWeather: Starting foreground service for location access (background=$isInBackground)');
+      await _startForegroundService();
+      // Give the service a moment to start
+      await Future.delayed(const Duration(milliseconds: 500));
 
       WeatherData? weather;
       var locationUpdated = false;
+      var usedCachedLocation = false; // Track if we used cached location
 
-      if (isInBackground) {
-        print('fetchAndSendWeather: Background flow - prefer cached/last known location');
-        if (hasCachedLocation) {
-          print(
-            'fetchAndSendWeather: Using cached coordinates: '
-            '$_lastKnownLatitude,$_lastKnownLongitude',
+      // Always try to get fresh location first when updating weather
+      // The foreground service ensures we can get location even in background
+      // Give enough time for GPS to get a fix (up to 40 seconds total)
+      print('fetchAndSendWeather: Requesting fresh current location (foreground service active)...');
+      try {
+        // Get fresh location - foreground service allows this even in background
+        // Increased timeout to allow GPS time to get a fix in background
+        weather = await _weatherService.fetchWeatherForCurrentLocation(
+          useLastKnownLocation: false, // Always try fresh location first
+        ).timeout(
+          const Duration(seconds: 40), // Increased timeout to match weather service (35s) + buffer
+          onTimeout: () {
+            print('fetchAndSendWeather: Fresh location request timed out after 40s, trying last known');
+            throw TimeoutException('Location request timed out');
+          },
+        );
+        await _saveLastKnownLocation(weather.latitude, weather.longitude);
+        locationUpdated = true;
+        usedCachedLocation = false; // Successfully got fresh location
+        print('fetchAndSendWeather: Successfully got fresh location: ${weather.latitude}, ${weather.longitude}');
+      } on TimeoutException catch (timeoutError) {
+        print('fetchAndSendWeather: Fresh location timed out: $timeoutError, trying last known position');
+        // Fallback to last known position if fresh location times out
+        try {
+          weather = await _weatherService.fetchWeatherForCurrentLocation(
+            useLastKnownLocation: true, // Fallback to last known
+          ).timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              print('fetchAndSendWeather: Last known location request also timed out');
+              throw TimeoutException('Location request timed out');
+            },
           );
+          await _saveLastKnownLocation(weather.latitude, weather.longitude);
+          locationUpdated = true;
+          usedCachedLocation = false; // Last known is still from system, not our cache
+          print('fetchAndSendWeather: Using last known location: ${weather.latitude}, ${weather.longitude}');
+        } catch (fallbackError) {
+          print('fetchAndSendWeather: Failed to get location (fresh and fallback): $fallbackError');
+          // Try cached coordinates as last resort
+          if (_hasCachedLocation) {
+            print('fetchAndSendWeather: Using cached coordinates as last resort');
+            try {
+              weather = await _weatherService
+                  .fetchWeather(_lastKnownLatitude!, _lastKnownLongitude!)
+                  .timeout(
+                const Duration(seconds: 20),
+                onTimeout: () {
+                  print('fetchAndSendWeather: Weather fetch with cached coords timed out');
+                  throw TimeoutException('Weather fetch timed out.');
+                },
+              );
+              usedCachedLocation = true; // Used our cached coordinates
+            } catch (cachedError) {
+              print('fetchAndSendWeather: All location methods failed: $cachedError');
+              if (!silent) {
+                errorMessage.value = _formatErrorMessage(fallbackError);
+              }
+              return;
+            }
+          } else {
+            print('fetchAndSendWeather: No cached location available, cannot update weather');
+            if (!silent) {
+              errorMessage.value = 'Cannot get location. Please ensure location services are enabled.';
+            }
+            return;
+          }
+        }
+      } catch (locationError) {
+        print('fetchAndSendWeather: Error getting location: $locationError');
+        // Try cached coordinates as last resort
+        if (_hasCachedLocation) {
+          print('fetchAndSendWeather: Using cached coordinates due to error');
           try {
             weather = await _weatherService
                 .fetchWeather(_lastKnownLatitude!, _lastKnownLongitude!)
@@ -269,154 +362,19 @@ class WeatherController extends GetxController {
                 throw TimeoutException('Weather fetch timed out.');
               },
             );
+            usedCachedLocation = true; // Used our cached coordinates
           } catch (cachedError) {
-            print('fetchAndSendWeather: Cached weather fetch failed: $cachedError');
-            final fallbackPosition = await _getSystemLastKnownPosition();
-            if (fallbackPosition == null) {
-              print('fetchAndSendWeather: No system last known position available in background, skipping weather update');
-              if (!silent) {
-                errorMessage.value =
-                    'Cannot get location in background. Please open the app in foreground to initialize weather updates.';
-              }
-              return;
+            print('fetchAndSendWeather: Cached weather fetch also failed: $cachedError');
+            if (!silent) {
+              errorMessage.value = _formatErrorMessage(locationError);
             }
-            try {
-              weather = await _weatherService
-                  .fetchWeather(
-                    fallbackPosition.latitude,
-                    fallbackPosition.longitude,
-                  )
-                  .timeout(
-                const Duration(seconds: 20),
-                onTimeout: () {
-                  print('fetchAndSendWeather: Weather fetch with fallback coords timed out');
-                  throw TimeoutException('Weather fetch timed out.');
-                },
-              );
-              await _saveLastKnownLocation(
-                fallbackPosition.latitude,
-                fallbackPosition.longitude,
-                timestamp: fallbackPosition.timestamp ?? DateTime.now(),
-              );
-              locationUpdated = true;
-            } catch (fallbackError) {
-              print('fetchAndSendWeather: Fallback weather fetch failed: $fallbackError');
-              if (!silent) {
-                errorMessage.value = _formatErrorMessage(fallbackError);
-              }
-              return;
-            }
+            return;
           }
         } else {
-          print('fetchAndSendWeather: No cached coordinates available, requesting system last known location');
-          final lastKnownPosition = await _getSystemLastKnownPosition();
-          if (lastKnownPosition == null) {
-            print('fetchAndSendWeather: System did not return a last known position, skipping background update');
-            if (!silent) {
-              errorMessage.value =
-                  'Cannot get location in background. Please open the app in foreground to initialize weather updates.';
-            }
-            return;
+          if (!silent) {
+            errorMessage.value = _formatErrorMessage(locationError);
           }
-          try {
-            weather = await _weatherService
-                .fetchWeather(
-                  lastKnownPosition.latitude,
-                  lastKnownPosition.longitude,
-                )
-                .timeout(
-              const Duration(seconds: 20),
-              onTimeout: () {
-                print('fetchAndSendWeather: Weather fetch with last known coords timed out');
-                throw TimeoutException('Weather fetch timed out.');
-              },
-            );
-            await _saveLastKnownLocation(
-              lastKnownPosition.latitude,
-              lastKnownPosition.longitude,
-              timestamp: lastKnownPosition.timestamp ?? DateTime.now(),
-            );
-            locationUpdated = true;
-          } catch (backgroundError) {
-            print('fetchAndSendWeather: Failed to fetch weather using last known coords: $backgroundError');
-            if (!silent) {
-              errorMessage.value = _formatErrorMessage(backgroundError);
-            }
-            return;
-          }
-        }
-      } else {
-        print('fetchAndSendWeather: Foreground flow - requesting fresh location');
-        try {
-          weather = await _weatherService.fetchWeatherForCurrentLocation(
-            useLastKnownLocation: false,
-          ).timeout(
-            const Duration(seconds: 15),
-            onTimeout: () {
-              print('fetchAndSendWeather: Fresh location request timed out after 15s');
-              throw TimeoutException('Location request timed out');
-            },
-          );
-          await _saveLastKnownLocation(weather.latitude, weather.longitude);
-          locationUpdated = true;
-        } on TimeoutException catch (timeoutError) {
-          print('fetchAndSendWeather: Fresh location timed out: $timeoutError');
-          if (hasCachedLocation) {
-            print('fetchAndSendWeather: Falling back to cached coordinates after timeout');
-            try {
-              weather = await _weatherService
-                  .fetchWeather(_lastKnownLatitude!, _lastKnownLongitude!)
-                  .timeout(
-                const Duration(seconds: 20),
-                onTimeout: () {
-                  print('fetchAndSendWeather: Weather fetch with cached coords timed out');
-                  throw TimeoutException('Weather fetch timed out.');
-                },
-              );
-            } catch (cachedError) {
-              print('fetchAndSendWeather: Cached weather fetch failed: $cachedError');
-              rethrow;
-            }
-          } else {
-            print('fetchAndSendWeather: No cached location, trying last known position');
-            try {
-              weather = await _weatherService.fetchWeatherForCurrentLocation(
-                useLastKnownLocation: true,
-              ).timeout(
-                const Duration(seconds: 12),
-                onTimeout: () {
-                  print('fetchAndSendWeather: Last known location request timed out');
-                  throw TimeoutException('Location request timed out');
-                },
-              );
-              await _saveLastKnownLocation(weather.latitude, weather.longitude);
-              locationUpdated = true;
-            } catch (recoveryError) {
-              print('fetchAndSendWeather: Unable to recover location after timeout: $recoveryError');
-              rethrow;
-            }
-          }
-        } catch (freshError) {
-          print('fetchAndSendWeather: Error getting fresh location: $freshError');
-          if (hasCachedLocation) {
-            print('fetchAndSendWeather: Using cached coordinates due to error');
-            try {
-              weather = await _weatherService
-                  .fetchWeather(_lastKnownLatitude!, _lastKnownLongitude!)
-                  .timeout(
-                const Duration(seconds: 20),
-                onTimeout: () {
-                  print('fetchAndSendWeather: Weather fetch with cached coords timed out');
-                  throw TimeoutException('Weather fetch timed out.');
-                },
-              );
-            } catch (cachedError) {
-              print('fetchAndSendWeather: Cached weather fetch also failed: $cachedError');
-              rethrow;
-            }
-          } else {
-            rethrow;
-          }
+          return;
         }
       }
 
@@ -437,6 +395,17 @@ class WeatherController extends GetxController {
       print('fetchAndSendWeather: Weather data fetched: ${resolvedWeather.cityName}, ${resolvedWeather.temperature}°C, ${resolvedWeather.condition}');
       weatherData.value = resolvedWeather;
       lastUpdateTime.value = DateTime.now();
+
+        // Weather update notifications disabled per user request
+      // if (isInBackground && (locationUpdated || usedCachedLocation)) {
+      //   final locationSource = usedCachedLocation 
+      //       ? 'cached location' 
+      //       : 'current location';
+      //   final notificationMessage = 
+      //       'Weather updated using $locationSource: ${resolvedWeather.cityName}, '
+      //       '${resolvedWeather.temperature.round()}°C, ${resolvedWeather.condition}';
+      //   await _showLocationUpdateNotification(notificationMessage, usedCachedLocation);
+      // }
 
       // Convert temperature to integer (round to nearest)
       // IMPORTANT: Always send temperature in Celsius. The useFahrenheit flag only tells
