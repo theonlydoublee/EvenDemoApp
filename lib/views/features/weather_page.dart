@@ -1,4 +1,4 @@
-import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/controllers/weather_controller.dart';
 import 'package:demo_ai_even/services/weather_service.dart';
 import 'package:flutter/material.dart';
@@ -81,7 +81,7 @@ class _WeatherPageState extends State<WeatherPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Connection status warning
-                  if (!BleManager.get().isConnected)
+                  if (!G1ManagerWrapper.instance.isConnected)
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
@@ -579,7 +579,7 @@ class _WeatherPageState extends State<WeatherPage> {
 
                   // Send Current Weather Button (only if weather data exists)
                   if (_controller.weatherData.value != null &&
-                      BleManager.get().isConnected)
+                      G1ManagerWrapper.instance.isConnected)
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(

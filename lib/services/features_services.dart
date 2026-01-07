@@ -1,45 +1,43 @@
 import 'dart:typed_data';
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/controllers/bmp_update_manager.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/utils/utils.dart';
 
 class FeaturesServices {
-  final bmpUpdateManager = BmpUpdateManager();
+  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
+  
   Future<void> sendBmp(String imageUrl) async {
     Uint8List bmpData = await Utils.loadBmpImage(imageUrl);
     await sendBmpFromBytes(bmpData);
   }
 
   Future<void> sendBmpFromBytes(Uint8List bmpData) async {
-    int initialSeq = 0;
-    bool isSuccess = await Proto.sendHeartBeat();
-    print("${DateTime.now()} testBMP -------startSendBeatHeart----isSuccess---$isSuccess------");
-    BleManager.get().startSendBeatHeart();
-
-    final results = await Future.wait([
-      bmpUpdateManager.updateBmp("L", bmpData, seq: initialSeq),
-      bmpUpdateManager.updateBmp("R", bmpData, seq: initialSeq)
-    ]);
-
-    bool successL = results[0];
-    bool successR = results[1];
-
-    if (successL) {
-      print("${DateTime.now()} left ble success");
-    } else {
-      print("${DateTime.now()} left ble fail");
+    if (!_g1.isConnected) {
+      print('FeaturesServices: Not connected to glasses');
+      return;
     }
-
-    if (successR) {
-      print("${DateTime.now()} right ble success");
-    } else {
-      print("${DateTime.now()} right ble fail");
+    
+    print("${DateTime.now()} sendBmpFromBytes: Starting BMP send using library");
+    
+    try {
+      // Use library's bitmap API to send image
+      await _g1.g1.bitmap.send(bmpData);
+      print("${DateTime.now()} sendBmpFromBytes: BMP sent successfully");
+    } catch (e) {
+      print("${DateTime.now()} sendBmpFromBytes: Error sending BMP: $e");
     }
   }
 
   Future<void> exitBmp() async {
-    bool isSuccess = await Proto.exit();
-    print("exitBmp----isSuccess---$isSuccess--");
+    if (!_g1.isConnected) {
+      print('FeaturesServices: Not connected to glasses');
+      return;
+    }
+    
+    try {
+      await _g1.g1.display.clear();
+      print("exitBmp: Successfully cleared display");
+    } catch (e) {
+      print("exitBmp: Error clearing display: $e");
+    }
   }
 }

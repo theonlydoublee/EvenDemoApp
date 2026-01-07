@@ -3,7 +3,40 @@
 
 > **Note**: This codebase is based on the original GitHub demo app from Even Realities and has been heavily modified.
 
-> **Warning**: All changes and code, including this readme.md have been generated/modifie using AI and definitely has bugs that have not been found yet.
+> **Warning**: All changes and code, including this readme.md have been generated/modified using AI and definitely has bugs that have not been found yet.
+
+## Architecture
+
+This app uses the [`even_realities_g1`](https://github.com/emingenc/even_realities_g1) library for all Bluetooth Low Energy (BLE) communication with the G1 smart glasses.
+
+### Key Components
+
+- **G1ManagerWrapper** (`lib/g1_manager_wrapper.dart`): A wrapper around the library's `G1Manager` that provides app-specific functionality and maintains backward compatibility with existing services.
+
+- **Services**: Located in `lib/services/`, these handle specific functionality:
+  - `evenai.dart`: Even AI voice assistant integration
+  - `notification_service.dart`: Android notification forwarding
+  - `weather_service.dart`: Weather data fetching
+  - `text_service.dart`: Text display on glasses
+  - `features_services.dart`: BMP image display
+  - `pin_text_service.dart`: Quick notes functionality
+
+- **Controllers**: Located in `lib/controllers/`, these manage state using GetX:
+  - `EvenaiModelController`: AI conversation history
+  - `PinTextController`: Quick notes management
+  - `WeatherController`: Weather data and auto-updates
+
+### Library Features Used
+
+The app uses the following features from the `even_realities_g1` library:
+- **G1Manager**: Connection management and scanning
+- **G1Display**: Text display and AI responses
+- **G1Bitmap**: BMP image display
+- **G1Notifications**: Notification forwarding
+- **G1Notes**: Quick notes on dashboard
+- **G1Settings**: Display settings (brightness, angle, position)
+- **G1TimeWeather**: Time and weather sync
+- **G1Microphone**: Voice recording for Even AI
 
 ## Setup Instructions
 

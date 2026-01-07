@@ -1,4 +1,4 @@
-import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/services/text_service.dart';
 import 'package:flutter/material.dart';
 
@@ -56,7 +56,7 @@ class _TextPageState extends State<TextPage> {
             ),
           ),
           GestureDetector(
-            onTap: !BleManager.get().isConnected && tfController.text.isNotEmpty
+            onTap: !G1ManagerWrapper.instance.isConnected && tfController.text.isNotEmpty
               ? null
               : () async {
                 String content = tfController.text;
@@ -72,7 +72,7 @@ class _TextPageState extends State<TextPage> {
               child: Text(
                 "Send to Glasses",
                 style: TextStyle(
-                  color: BleManager.get().isConnected && tfController.text.isNotEmpty 
+                  color: G1ManagerWrapper.instance.isConnected && tfController.text.isNotEmpty 
                     ? Colors.black
                     : Colors.grey,
                   fontSize: 16,

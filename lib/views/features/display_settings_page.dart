@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:even_realities_g1/even_realities_g1.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +11,8 @@ class DisplaySettingsPage extends StatefulWidget {
 }
 
 class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
+  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
+  
   // Brightness Settings (0x00 to 0x2A = 0 to 42)
   double _brightness = 21.0; // Default to middle (21 = 0x15)
   bool _autoBrightness = false; // Default to manual
@@ -39,7 +41,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
     _loadDisplayType();
     _loadBrightnessSettings();
     // Load settings if already connected
-    if (BleManager.get().isConnected) {
+    if (_g1.isConnected) {
       // Small delay to ensure connection is fully established
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
@@ -93,10 +95,33 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
       _lastStatusMessage = 'Applying brightness settings...';
     });
     
-    bool success = await Proto.setBrightnessSettings(
-      brightness: _brightness.toInt(),
-      autoBrightness: _autoBrightness,
-    );
+    bool success = false;
+    try {
+      // Map slider value (0-42) to G1Brightness enum
+      G1Brightness brightness;
+      if (_autoBrightness) {
+        brightness = G1Brightness.auto;
+      } else {
+        // Map 0-42 to level1-level5
+        if (_brightness <= 8) {
+          brightness = G1Brightness.level1;
+        } else if (_brightness <= 16) {
+          brightness = G1Brightness.level2;
+        } else if (_brightness <= 24) {
+          brightness = G1Brightness.level3;
+        } else if (_brightness <= 32) {
+          brightness = G1Brightness.level4;
+        } else {
+          brightness = G1Brightness.level5;
+        }
+      }
+      
+      await _g1.g1.settings.setBrightness(brightness);
+      success = true;
+    } catch (e) {
+      print('Error setting brightness: $e');
+      success = false;
+    }
     
     setState(() {
       _isApplyingSettings = false;
@@ -109,7 +134,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
   /// Load current display settings from glasses
   Future<void> _loadCurrentSettings() async {
     // Only fetch if connected
-    if (!BleManager.get().isConnected) {
+    if (!_g1.isConnected) {
       print('_loadCurrentSettings: Not connected, skipping');
       return;
     }
@@ -120,43 +145,11 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
     });
 
     try {
-      List<String> loadedSettings = [];
-      
-      // Get head up angle settings from right arm
-      final headUpAngle = await Proto.getHeadUpAngleSettings();
-      if (headUpAngle != null) {
-        setState(() {
-          _headUpAngle = headUpAngle.toDouble();
-        });
-        loadedSettings.add('Head Up Angle: ${headUpAngle}°');
-        print('_loadCurrentSettings: Successfully loaded head up angle=$headUpAngle');
-      } else {
-        print('_loadCurrentSettings: Failed to get head up angle settings');
-      }
-      
-      // Get display settings (height and depth) from right arm
-      final displaySettings = await Proto.getDisplaySettings();
-      if (displaySettings != null) {
-        setState(() {
-          _displayHeight = displaySettings['height']!.toDouble();
-          _displayDepth = displaySettings['depth']!.toDouble();
-        });
-        loadedSettings.add('Height: ${displaySettings['height']}, Depth: ${displaySettings['depth']}');
-        print('_loadCurrentSettings: Successfully loaded height=${displaySettings['height']}, depth=${displaySettings['depth']}');
-      } else {
-        print('_loadCurrentSettings: Failed to get display settings');
-      }
-      
-      // Update status message
-      if (loadedSettings.isNotEmpty) {
-        setState(() {
-          _lastStatusMessage = 'Success: Loaded settings (${loadedSettings.join(', ')})';
-        });
-      } else {
-        setState(() {
-          _lastStatusMessage = 'Failed: Could not load settings from glasses';
-        });
-      }
+      // Note: The library doesn't expose methods to read current settings
+      // So we just use stored preferences
+      setState(() {
+        _lastStatusMessage = 'Settings loaded from preferences';
+      });
     } catch (e) {
       print('_loadCurrentSettings: Error - $e');
       setState(() {
@@ -189,7 +182,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Connection status warning
-          if (!BleManager.get().isConnected)
+          if (!_g1.isConnected)
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
@@ -270,7 +263,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
             ),
           
           // Refresh button to reload settings
-          if (BleManager.get().isConnected && !_isLoadingSettings)
+          if (_g1.isConnected && !_isLoadingSettings)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.only(bottom: 16),
@@ -330,7 +323,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                         // Save settings
                         _saveBrightnessSettings();
                         // Apply immediately if connected
-                        if (BleManager.get().isConnected) {
+                        if (_g1.isConnected) {
                           _applyBrightnessSettings();
                         }
                       },
@@ -372,7 +365,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                       // Save settings when user finishes dragging
                       _saveBrightnessSettings();
                       // Apply immediately if connected
-                      if (BleManager.get().isConnected) {
+                      if (_g1.isConnected) {
                         _applyBrightnessSettings();
                       }
                     },
@@ -382,7 +375,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: (!BleManager.get().isConnected || _isApplyingSettings)
+                    onPressed: (!_g1.isConnected || _isApplyingSettings)
                         ? null
                         : _applyBrightnessSettings,
                     child: _isApplyingSettings
@@ -458,7 +451,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: (!BleManager.get().isConnected || _isApplyingSettings)
+                    onPressed: (!_g1.isConnected || _isApplyingSettings)
                         ? null
                         : () async {
                             setState(() {
@@ -466,9 +459,14 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                               _lastStatusMessage = 'Applying head up angle settings...';
                             });
                             
-                            bool success = await Proto.setHeadUpAngleSettings(
-                              angle: _headUpAngle.toInt(),
-                            );
+                            bool success = false;
+                            try {
+                              await _g1.g1.settings.setHeadUpAngle(_headUpAngle.toInt());
+                              success = true;
+                            } catch (e) {
+                              print('Error setting head up angle: $e');
+                              success = false;
+                            }
                             
                             setState(() {
                               _isApplyingSettings = false;
@@ -561,7 +559,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: (!BleManager.get().isConnected || _isApplyingSettings)
+                    onPressed: (!_g1.isConnected || _isApplyingSettings)
                         ? null
                         : () async {
                             setState(() {
@@ -572,10 +570,18 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                             // Save to preferences
                             await _saveDisplayType(_displayType);
                             
-                            // Apply to glasses
-                            bool success = await Proto.setDashboardMode(
-                              modeId: _displayType,
-                            );
+                            // Apply to glasses using library
+                            bool success = false;
+                            try {
+                              final layout = _displayType == 0 
+                                  ? G1DashboardLayout.full 
+                                  : (_displayType == 1 ? G1DashboardLayout.dual : G1DashboardLayout.minimal);
+                              await _g1.g1.dashboard.setLayout(layout);
+                              success = true;
+                            } catch (e) {
+                              print('Error setting display type: $e');
+                              success = false;
+                            }
                             
                             setState(() {
                               _isApplyingSettings = false;
@@ -692,7 +698,7 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: (!BleManager.get().isConnected || _isApplyingSettings)
+                    onPressed: (!_g1.isConnected || _isApplyingSettings)
                         ? null
                         : () async {
                             setState(() {
@@ -700,11 +706,29 @@ class _DisplaySettingsPageState extends State<DisplaySettingsPage> {
                               _lastStatusMessage = 'Applying display settings (this will take a few seconds)...';
                             });
                             
-                            bool success = await Proto.setDisplaySettingsWithPreview(
-                              height: _displayHeight.toInt(),
-                              depth: _displayDepth.toInt(),
-                              previewDelaySeconds: 3,
-                            );
+                            bool success = false;
+                            try {
+                              // Preview the settings first
+                              await _g1.g1.settings.setDisplayPosition(
+                                height: _displayHeight.toInt(),
+                                depth: _displayDepth.toInt(),
+                                preview: true,
+                              );
+                              
+                              // Wait for preview
+                              await Future.delayed(const Duration(seconds: 3));
+                              
+                              // Apply the settings permanently
+                              await _g1.g1.settings.setDisplayPosition(
+                                height: _displayHeight.toInt(),
+                                depth: _displayDepth.toInt(),
+                                preview: false,
+                              );
+                              success = true;
+                            } catch (e) {
+                              print('Error setting display position: $e');
+                              success = false;
+                            }
                             
                             setState(() {
                               _isApplyingSettings = false;

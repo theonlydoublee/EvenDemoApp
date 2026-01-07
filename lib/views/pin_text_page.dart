@@ -3,7 +3,7 @@ import 'package:get/get.dart';
 import 'package:demo_ai_even/controllers/pin_text_controller.dart';
 import 'package:demo_ai_even/models/pin_text_model.dart';
 import 'package:demo_ai_even/services/pin_text_service.dart';
-import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 
 class PinTextPage extends StatelessWidget {
   const PinTextPage({super.key});
@@ -96,7 +96,7 @@ class PinTextPage extends StatelessWidget {
                       tooltip: note.isPinned ? 'Unpin' : 'Pin',
                     ),
                     // Send as Text button
-                    if (BleManager.get().isConnected)
+                    if (G1ManagerWrapper.instance.isConnected)
                       IconButton(
                         icon: const Icon(Icons.send),
                         onPressed: () {

@@ -1,6 +1,6 @@
 // ignore_for_file: library_private_types_in_public_api
 
-import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/services/features_services.dart';
 import 'package:flutter/material.dart';
 
@@ -25,7 +25,7 @@ class _BmpState extends State<BmpPage> {
             children: [
               GestureDetector(
                 onTap: () async {
-                  if (BleManager.get().isConnected == false) return;
+                  if (!G1ManagerWrapper.instance.isConnected) return;
                   print("${DateTime.now()} to show bmp1-----------");
                   FeaturesServices().sendBmp("assets/images/image_1.bmp");
                 },
@@ -42,7 +42,7 @@ class _BmpState extends State<BmpPage> {
               const SizedBox(height: 16),
               GestureDetector(
                 onTap: () async {
-                  if (BleManager.get().isConnected == false) return;
+                  if (!G1ManagerWrapper.instance.isConnected) return;
                   print("${DateTime.now()} to show bmp2-----------");
                   FeaturesServices().sendBmp("assets/images/image_2.bmp");
                 },
@@ -59,8 +59,8 @@ class _BmpState extends State<BmpPage> {
               const SizedBox(height: 16),
               GestureDetector(
                 onTap: () async {
-                  if (BleManager.get().isConnected == false) return;
-                  FeaturesServices().exitBmp(); // todo
+                  if (!G1ManagerWrapper.instance.isConnected) return;
+                  FeaturesServices().exitBmp();
                 },
                 child: Container(
                   height: 60,

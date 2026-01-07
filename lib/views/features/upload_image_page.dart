@@ -2,7 +2,7 @@
 
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/services/features_services.dart';
 import 'package:demo_ai_even/utils/utils.dart';
 import 'package:flutter/material.dart';
@@ -45,7 +45,7 @@ class _UploadImageState extends State<UploadImagePage> {
   @override
   void dispose() {
     // Clear touchpad callback when page is disposed
-    BleManager.get().onTouchpadTap = null;
+    G1ManagerWrapper.instance.onTouchpadTap = null;
     super.dispose();
   }
 
@@ -63,7 +63,7 @@ class _UploadImageState extends State<UploadImagePage> {
           'Position: $_scrollPosition / ${_fullImageHeight - 136}px';
     });
     // Set touchpad callback
-    BleManager.get().onTouchpadTap = _handleTouchpadTap;
+    G1ManagerWrapper.instance.onTouchpadTap = _handleTouchpadTap;
   }
 
   void _disableTouchpadMode() {
@@ -72,7 +72,7 @@ class _UploadImageState extends State<UploadImagePage> {
       _touchpadInstructions = '';
     });
     // Clear touchpad callback
-    BleManager.get().onTouchpadTap = null;
+    G1ManagerWrapper.instance.onTouchpadTap = null;
   }
 
   Future<void> _pickImage() async {
@@ -261,7 +261,7 @@ class _UploadImageState extends State<UploadImagePage> {
       return;
     }
 
-    if (!BleManager.get().isConnected) {
+    if (!G1ManagerWrapper.instance.isConnected) {
       _showToast('Not connected to glasses');
       return;
     }

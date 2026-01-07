@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:demo_ai_even/g1_manager_wrapper.dart';
 import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/services/proto.dart';
 
 class TextService {
   static TextService? _instance;
@@ -13,82 +13,72 @@ class TextService {
   static List<String> list = [];
   static List<String> sendReplys = [];
 
-  TextService._(); 
+  TextService._();
+  
+  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
 
   Future startSendText(String text) async {
     isRunning = true;
 
     _currentLine = 0;
     list = EvenAIDataMethod.measureStringList(text);
-   
-    if (list.length < 4) {
-      String startScreenWords =
-          list.sublist(0, min(3, list.length)).map((str) => '$str\n').join();
-      String headString = '\n\n';
-      startScreenWords = headString + startScreenWords;
-
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
+    
+    if (!_g1.isConnected) {
+      print('TextService: Not connected to glasses');
+      clear();
       return;
     }
-
-    if (list.length == 4) {
-      String startScreenWords =
-          list.sublist(0, 4).map((str) => '$str\n').join();
-      String headString = '\n';
-      startScreenWords = headString + startScreenWords;
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
-      return;
-    }
-
-    if (list.length == 5) {
-      String startScreenWords =
-          list.sublist(0, 5).map((str) => '$str\n').join();
-      await doSendText(startScreenWords, 0x01, 0x70, 0);
-      return;
-    }
-
-    String startScreenWords = list.sublist(0, 5).map((str) => '$str\n').join();
-    bool isSuccess = await doSendText(startScreenWords, 0x01, 0x70, 0);
-    if (isSuccess) {
-      _currentLine = 0;
-      await updateReplyToOSByTimer();
-    } else {
-      clear(); 
+    
+    try {
+      // Use library's display API for text display
+      await _g1.g1.display.showText(text);
+      
+      // If text is long, set up auto-paging timer
+      if (list.length > 5) {
+        _currentLine = 0;
+        await _startAutoPaging();
+      }
+    } catch (e) {
+      print('TextService: Error sending text: $e');
+      clear();
     }
   }
 
   int retryCount = 0;
   Future<bool> doSendText(String text, int type, int status, int pos) async {
-   
     print('${DateTime.now()} doSendText--currentPage---${getCurrentPage()}-----text----$text-----type---$type---status---$status----pos---$pos-');
-    if (!isRunning) {
+    if (!isRunning || !_g1.isConnected) {
       return false;
     }
 
-    bool isSuccess = await Proto.sendEvenAIData(text,
-        newScreen: EvenAIDataMethod.transferToNewScreen(type, status),
-        pos: pos,
-        current_page_num: getCurrentPage(),
-        max_page_num: getTotalPages()); // todo pos
-    if (!isSuccess) {
+    try {
+      // Use library's display API
+      await _g1.g1.display.showText(text);
+      retryCount = 0;
+      return true;
+    } catch (e) {
+      print('TextService: Error in doSendText: $e');
       if (retryCount < maxRetry) {
         retryCount++;
-        await doSendText(text, type, status, pos);
+        return await doSendText(text, type, status, pos);
       } else {
         retryCount = 0;
         return false;
       }
     }
-    retryCount = 0;
-    return true;
   }
 
-  Future updateReplyToOSByTimer() async {
+  Future _startAutoPaging() async {
     if (!isRunning) return;
     int interval = 8; // The paging interval can be customized
    
     _timer?.cancel();
     _timer = Timer.periodic(Duration(seconds: interval), (timer) async {
+      if (!isRunning || !_g1.isConnected) {
+        _timer?.cancel();
+        _timer = null;
+        return;
+      }
 
       _currentLine = min(_currentLine + 5, list.length - 1);
       sendReplys = list.sublist(_currentLine);
@@ -96,38 +86,33 @@ class TextService {
       if (_currentLine > list.length - 1) {
         _timer?.cancel();
         _timer = null;
-
         clear();
       } else {
-        if (sendReplys.length < 4) {
-          var mergedStr = sendReplys
-              .sublist(0, sendReplys.length)
-              .map((str) => '$str\n')
-              .join();
+        int endIdx = min(5, sendReplys.length);
+        var mergedStr = sendReplys
+            .sublist(0, endIdx)
+            .map((str) => '$str\n')
+            .join();
 
+        try {
+          await _g1.g1.display.showText(mergedStr);
+          
           if (_currentLine >= list.length - 5) {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
             _timer?.cancel();
             _timer = null;
-          } else {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
           }
-        } else {
-          var mergedStr = sendReplys
-              .sublist(0, min(5, sendReplys.length))
-              .map((str) => '$str\n')
-              .join();
-
-          if (_currentLine >= list.length - 5) {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
-            _timer?.cancel();
-            _timer = null;
-          } else {
-            await doSendText(mergedStr, 0x01, 0x70, 0);
-          }
+        } catch (e) {
+          print('TextService: Error during auto-paging: $e');
+          _timer?.cancel();
+          _timer = null;
         }
       }
     });
+  }
+
+  @Deprecated('Use _startAutoPaging instead')
+  Future updateReplyToOSByTimer() async {
+    await _startAutoPaging();
   }
 
   int getTotalPages() {
