@@ -52,6 +52,8 @@ dependencies:
   # Image picking and processing
   image_picker: ^1.0.7
   image: ^4.1.7
+  # Environment variables
+  flutter_dotenv: ^5.1.0
 
 
 dev_dependencies:
@@ -78,6 +80,7 @@ flutter:
 
   assets:
     - assets/images/
+    - .env
 
   # To add assets to your application, add an assets section, like this:
   # assets:

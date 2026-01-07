@@ -1,14 +1,20 @@
 import 'package:dio/dio.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class ApiOpenRouterService {
   late Dio _dio;
 
   ApiOpenRouterService() {
+    final apiKey = dotenv.env['OPENROUTER_API_KEY'] ?? '';
+    if (apiKey.isEmpty || apiKey == 'your_openrouter_api_key_here') {
+      print('Warning: OpenRouter API key not configured. Please set OPENROUTER_API_KEY in .env file.');
+    }
+    
     _dio = Dio(
       BaseOptions(
         baseUrl: 'https://openrouter.ai/api/v1',
         headers: {
-          'Authorization': 'Your token here',
+          'Authorization': 'Bearer $apiKey',
           'Content-Type': 'application/json',
         },
       ),

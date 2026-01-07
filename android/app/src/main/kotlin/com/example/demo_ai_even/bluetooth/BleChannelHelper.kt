@@ -145,6 +145,7 @@ class BleMethodChannel(
                     "checkBatteryOptimization" -> checkBatteryOptimization(call, result)
                     "showWeatherNotification" -> showWeatherNotification(call, result)
                     "resolveCallerName" -> resolveCallerName(call, result)
+                    "setGoogleCloudCredentials" -> setGoogleCloudCredentials(call, result)
                     else -> result.notImplemented()
                 }
             } catch (e: Exception) {
@@ -502,6 +503,27 @@ class BleMethodChannel(
         } catch (e: Exception) {
             Log.e(TAG, "Error resolving caller name: ${e.message}", e)
             result.error("EXCEPTION", "Error resolving caller name: ${e.message}", null)
+        }
+    }
+
+    private fun setGoogleCloudCredentials(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val arguments = call.arguments as? Map<*, *>
+            val credentialsJson = arguments?.get("credentialsJson") as? String
+
+            if (credentialsJson.isNullOrEmpty()) {
+                Log.d(TAG, "No Google Cloud credentials provided - will use file from assets if available")
+                result.success(false)
+                return
+            }
+
+            // Initialize Google Cloud Speech Service with credentials from Flutter
+            com.example.demo_ai_even.speech.GoogleCloudSpeechService.instance.initialize(context, credentialsJson)
+            Log.d(TAG, "Google Cloud credentials set from Flutter environment")
+            result.success(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting Google Cloud credentials: ${e.message}", e)
+            result.error("EXCEPTION", "Error setting Google Cloud credentials: ${e.message}", null)
         }
     }
 }

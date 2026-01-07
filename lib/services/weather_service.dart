@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 
@@ -32,9 +33,8 @@ class WeatherData {
 class WeatherService {
   late Dio _dio;
   
-  // TODO: Replace with your OpenWeatherMap API key
-  // Get a free API key from: https://openweathermap.org/api
-  static const String _apiKey = 'API KEY HERE';
+  // API key loaded from .env file
+  static String get _apiKey => dotenv.env['OPENWEATHERMAP_API_KEY'] ?? '';
   static const String _baseUrl = 'https://api.openweathermap.org/data/3.0';
 
   // Location accuracy preference (default to high for better sub-area precision)
@@ -298,8 +298,8 @@ class WeatherService {
   /// Fetch weather data from OpenWeatherMap One Call API 3.0
   /// Documentation: https://openweathermap.org/api/one-call-3
   Future<WeatherData> fetchWeather(double latitude, double longitude) async {
-    if (_apiKey == 'YOUR_OPENWEATHERMAP_API_KEY_HERE') {
-      throw Exception('OpenWeatherMap API key not configured. Please set your API key in weather_service.dart');
+    if (_apiKey.isEmpty || _apiKey == 'your_openweathermap_api_key_here') {
+      throw Exception('OpenWeatherMap API key not configured. Please set OPENWEATHERMAP_API_KEY in .env file.');
     }
 
     try {

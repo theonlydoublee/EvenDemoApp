@@ -7,13 +7,49 @@
 
 ## Setup Instructions
 
-Before running the app, you need to configure the following API keys and credentials:
+Before running the app, you need to configure API keys and credentials using environment variables:
 
-1. **OpenRouter API Key**: Update `lib/services/api_services_openrouter.dart` line 11 with your OpenRouter API key. You can also change the model on line 22 if you would like to use a different model.
+### 1. Create Environment File
 
-2. **OpenWeatherMap API Key**: Update `lib/services/weather_service.dart` line 37 with an OpenWeatherMap API key.
+Copy the example environment file to create your own `.env` file:
 
-3. **Google Cloud Credentials**: Configure a Google Cloud credential JSON file for voice-to-text functionality on Android. Place the credentials file in `android/app/src/main/assets/google-cloud-credentials.json`.
+```bash
+cp .env.example .env
+```
+
+### 2. Configure API Keys
+
+Edit the `.env` file and add your API keys:
+
+1. **OpenRouter API Key**: Get your API key from [OpenRouter](https://openrouter.ai/keys) and set it in `.env`:
+   ```
+   OPENROUTER_API_KEY=your_actual_api_key_here
+   ```
+
+2. **OpenWeatherMap API Key**: Get a free API key from [OpenWeatherMap](https://openweathermap.org/api) and set it in `.env`:
+   ```
+   OPENWEATHERMAP_API_KEY=your_actual_api_key_here
+   ```
+
+3. **Google Cloud Credentials** (Optional - for voice-to-text): You have two options:
+   
+   **Option A - Via .env file**: Get credentials JSON from [Google Cloud Console](https://console.cloud.google.com/apis/credentials), then paste the entire JSON content as a single line in `.env`:
+   ```
+   GOOGLE_CLOUD_CREDENTIALS_JSON={"type":"service_account","project_id":"..."}
+   ```
+   
+   **Option B - Via file**: Place the credentials JSON file at:
+   ```
+   android/app/src/main/assets/google-cloud-credentials.json
+   ```
+
+### 3. Install Dependencies
+
+```bash
+flutter pub get
+```
+
+> **Note**: The `.env` file is gitignored and will not be committed to version control. Never commit API keys to the repository.
 
 ## How To Connect
 

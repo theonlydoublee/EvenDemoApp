@@ -1,4 +1,3 @@
-
 import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
 import 'package:demo_ai_even/controllers/pin_text_controller.dart';
@@ -7,16 +6,25 @@ import 'package:demo_ai_even/services/notification_service.dart';
 import 'package:demo_ai_even/services/pin_text_voice_service.dart';
 import 'package:demo_ai_even/views/home_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 
+const MethodChannel _methodChannel = MethodChannel('method.bluetooth');
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load environment variables from .env file
+  await dotenv.load(fileName: ".env");
   
   BleManager.get();
   Get.put(EvenaiModelController());
   Get.put(PinTextController());
   Get.put(WeatherController());
+  
+  // Initialize Google Cloud credentials from .env
+  await _initializeGoogleCloudCredentials();
   
   // Initialize notification service
   await _initializeNotificationService();
@@ -25,6 +33,30 @@ void main() async {
   PinTextVoiceService.instance.startListening();
   
   runApp(MyApp());
+}
+
+Future<void> _initializeGoogleCloudCredentials() async {
+  try {
+    final credentialsJson = dotenv.env['GOOGLE_CLOUD_CREDENTIALS_JSON'] ?? '';
+    
+    if (credentialsJson.isEmpty) {
+      print('GoogleCloud: No credentials in .env, will use file from assets if available');
+      return;
+    }
+    
+    // Send credentials to native Android code
+    final result = await _methodChannel.invokeMethod('setGoogleCloudCredentials', {
+      'credentialsJson': credentialsJson,
+    });
+    
+    if (result == true) {
+      print('GoogleCloud: Credentials set from .env file');
+    } else {
+      print('GoogleCloud: Failed to set credentials, will use file from assets if available');
+    }
+  } catch (e) {
+    print('GoogleCloud: Error initializing credentials: $e');
+  }
 }
 
 Future<void> _initializeNotificationService() async {
