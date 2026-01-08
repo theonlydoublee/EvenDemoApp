@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:get/get.dart';
 import 'package:demo_ai_even/services/weather_service.dart';
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
-import 'package:even_realities_g1/even_realities_g1.dart';
+import 'package:demo_ai_even/services/proto.dart';
+import 'package:demo_ai_even/ble_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
@@ -246,14 +246,12 @@ class WeatherController extends GetxController {
     }
   }
 
-  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
-
   /// Fetch weather for current location and send to glasses
   /// [silent]: If true, don't set error messages (for auto-updates)
   Future<void> fetchAndSendWeather({bool silent = false}) async {
-    print('fetchAndSendWeather called: silent=$silent, isConnected=${_g1.isConnected}');
+    print('fetchAndSendWeather called: silent=$silent, isConnected=${BleManager.get().isConnected}');
     
-    if (!_g1.isConnected) {
+    if (!BleManager.get().isConnected) {
       print('fetchAndSendWeather: Glasses not connected, returning');
       if (!silent) {
         errorMessage.value = 'Glasses are not connected. Please connect to glasses first.';
@@ -268,7 +266,7 @@ class WeatherController extends GetxController {
 
     try {
       print('fetchAndSendWeather: Starting weather update process...');
-      final isInBackground = _g1.isAppInBackground();
+      final isInBackground = BleManager.get().isAppInBackground();
       
       // Always start foreground service during weather updates to ensure location can be obtained
       // This is especially important in background, but also helps in foreground
@@ -423,28 +421,26 @@ class WeatherController extends GetxController {
         return;
       }
 
-      // Send to glasses using library API
-      try {
-        // Convert weather icon ID to G1WeatherIcon
-        final weatherIcon = _mapWeatherIdToG1Icon(resolvedWeather.weatherIconId);
-        
-        await _g1.g1.timeWeather.sync(
-          temperatureInCelsius: tempCelsius,
-          weatherIcon: weatherIcon,
-          temperatureUnit: useFahrenheit.value ? TemperatureUnit.fahrenheit : TemperatureUnit.celsius,
-          timeFormat: use12HourFormat.value ? TimeFormat.twelveHour : TimeFormat.twentyFourHour,
-        );
-        
+      // Send to glasses (temperature is always in Celsius, flag controls display)
+      final success = await Proto.setTimeAndWeather(
+        weatherIconId: resolvedWeather.weatherIconId,
+        temperature: tempCelsius,
+        useFahrenheit: useFahrenheit.value,
+        use12HourFormat: use12HourFormat.value,
+      );
+
+      if (!success) {
+        if (!silent) {
+          errorMessage.value = 'Failed to send weather data to glasses. Please try again.';
+        } else {
+          print('Weather auto-update: Failed to send to glasses');
+        }
+      } else {
         if (!silent) {
           errorMessage.value = null;
         }
         print('Weather auto-update: Successfully updated weather at ${DateTime.now()}');
-      } catch (e) {
-        if (!silent) {
-          errorMessage.value = 'Failed to send weather data to glasses. Please try again.';
-        } else {
-          print('Weather auto-update: Failed to send to glasses: $e');
-        }
+        // Notifications removed per user request
       }
     } catch (e, stackTrace) {
       if (!silent) {
@@ -483,7 +479,7 @@ class WeatherController extends GetxController {
       return false;
     }
 
-    if (!_g1.isConnected) {
+    if (!BleManager.get().isConnected) {
       errorMessage.value = 'Glasses are not connected. Please connect to glasses first.';
       return false;
     }
@@ -500,46 +496,24 @@ class WeatherController extends GetxController {
         return false;
       }
 
-      // Convert weather icon ID to G1WeatherIcon
-      final weatherIcon = _mapWeatherIdToG1Icon(weather.weatherIconId);
-      
-      await _g1.g1.timeWeather.sync(
-        temperatureInCelsius: tempCelsius,
-        weatherIcon: weatherIcon,
-        temperatureUnit: useFahrenheit.value ? TemperatureUnit.fahrenheit : TemperatureUnit.celsius,
-        timeFormat: use12HourFormat.value ? TimeFormat.twelveHour : TimeFormat.twentyFourHour,
+      final success = await Proto.setTimeAndWeather(
+        weatherIconId: weather.weatherIconId,
+        temperature: tempCelsius,
+        useFahrenheit: useFahrenheit.value,
+        use12HourFormat: use12HourFormat.value,
       );
 
-      errorMessage.value = null;
-      return true;
+      if (!success) {
+        errorMessage.value = 'Failed to send weather data to glasses.';
+      } else {
+        errorMessage.value = null;
+      }
+
+      return success;
     } catch (e) {
       errorMessage.value = 'Error sending weather: $e';
       print('Error sending weather: $e');
       return false;
-    }
-  }
-
-  /// Map weather icon ID to G1WeatherIcon enum
-  G1WeatherIcon _mapWeatherIdToG1Icon(int iconId) {
-    switch (iconId) {
-      case 0x00: return G1WeatherIcon.nothing;
-      case 0x01: return G1WeatherIcon.night;
-      case 0x02: return G1WeatherIcon.clouds;
-      case 0x03: return G1WeatherIcon.drizzle;
-      case 0x04: return G1WeatherIcon.heavyDrizzle;
-      case 0x05: return G1WeatherIcon.rain;
-      case 0x06: return G1WeatherIcon.heavyRain;
-      case 0x07: return G1WeatherIcon.thunder;
-      case 0x08: return G1WeatherIcon.thunderstorm;
-      case 0x09: return G1WeatherIcon.snow;
-      case 0x0A: return G1WeatherIcon.mist;
-      case 0x0B: return G1WeatherIcon.fog;
-      case 0x0C: return G1WeatherIcon.sand;
-      case 0x0D: return G1WeatherIcon.squalls;
-      case 0x0E: return G1WeatherIcon.tornado;
-      case 0x0F: return G1WeatherIcon.freezingRain;
-      case 0x10: return G1WeatherIcon.sunny;
-      default: return G1WeatherIcon.nothing;
     }
   }
 
@@ -627,7 +601,7 @@ class WeatherController extends GetxController {
       // Set up periodic timer
       _autoUpdateTimer = Timer.periodic(duration, (timer) {
         print('Auto-update timer fired at ${DateTime.now()}');
-        if (_g1.isConnected) {
+        if (BleManager.get().isConnected) {
           fetchAndSendWeather(silent: true);
         } else {
           print('Weather auto-update: Skipping update - glasses not connected');
@@ -667,9 +641,9 @@ class WeatherController extends GetxController {
     _autoUpdateTimer = Timer.periodic(duration, (timer) async {
       print('Auto-update timer fired at ${DateTime.now()} (interval: ${updateIntervalMinutes.value} minutes)');
       print('Weather auto-update: Checking connection and background state...');
-      print('Weather auto-update: isConnected=${_g1.isConnected}, isBackground=${_g1.isAppInBackground()}');
+      print('Weather auto-update: isConnected=${BleManager.get().isConnected}, isBackground=${BleManager.get().isAppInBackground()}');
       
-      if (_g1.isConnected) {
+      if (BleManager.get().isConnected) {
         try {
           print('Weather auto-update: Starting fetchAndSendWeather...');
           await fetchAndSendWeather(silent: true);

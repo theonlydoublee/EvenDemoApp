@@ -1,6 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/views/features/notification/notify_model.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -26,8 +27,6 @@ class _NotificationState extends State<NotificationPage> {
   String notifyContent = "";
   int notifyId = 0;
   bool isSending = false;
-  
-  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
 
   @override
   void initState() {
@@ -62,26 +61,57 @@ class _NotificationState extends State<NotificationPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
-              //  App whitelist info
+              //  App whitelist
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 16),
+                height: 100,
                 decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.1),
+                  color: Colors.white,
                   borderRadius: BorderRadius.circular(5),
                 ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.orange),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Note: Whitelist is managed locally. Use the main Notification Whitelist page to configure.',
-                        style: TextStyle(color: Colors.orange, fontSize: 12),
-                      ),
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(8),
+                child: TextField(
+                  decoration: const InputDecoration.collapsed(hintText: ""),
+                  focusNode: identifierFn,
+                  controller: identifierCtl,
+                  onChanged: (identifier) => appWhitelist = identifier,
+                  maxLines: null,
+                ),
+              ),
+              GestureDetector(
+                onTap: !BleManager.get().isConnected || isSetting
+                    ? null
+                    : () async {
+                        final appWhiteList =
+                            NotifyWhitelistModel.fromJson(appWhitelist);
+                        if (appWhiteList == null) {
+                          Fluttertoast.showToast(
+                              msg:
+                                  "Json conversion error, please check and retry");
+                          return;
+                        }
+                        setState(() => isSetting = true);
+                        await Proto.sendNewAppWhiteListJson(
+                            appWhiteList.toJson());
+                        setState(() => isSetting = false);
+                      },
+                child: Container(
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    isSetting ? "Setting" : "Add to whitelist",
+                    style: TextStyle(
+                      color: BleManager.get().isConnected
+                          ? Colors.black
+                          : Colors.grey,
+                      fontSize: 16,
                     ),
-                  ],
+                  ),
                 ),
               ),
               //  Notify edit
@@ -103,7 +133,7 @@ class _NotificationState extends State<NotificationPage> {
                 ),
               ),
               GestureDetector(
-                onTap: !_g1.isConnected || isSending
+                onTap: !BleManager.get().isConnected || isSending
                     ? null
                     : () async {
                         final newNotify = NotifyModel.fromJson(notifyContent);
@@ -118,19 +148,7 @@ class _NotificationState extends State<NotificationPage> {
                         if (notifyId > 255) {
                           notifyId = 0;
                         }
-                        try {
-                          // Send notification using library
-                          await _g1.g1.notifications.sendSimple(
-                            appName: newNotify.displayName,
-                            title: newNotify.title,
-                            message: newNotify.message,
-                            subtitle: newNotify.subTitle,
-                            appIdentifier: newNotify.appIdentifier,
-                          );
-                          Fluttertoast.showToast(msg: "Notification sent successfully");
-                        } catch (e) {
-                          Fluttertoast.showToast(msg: "Error sending notification: $e");
-                        }
+                        await Proto.sendNotify(newNotify.toMap(), notifyId);
                         setState(() => isSending = false);
                       },
                 child: Container(
@@ -143,7 +161,7 @@ class _NotificationState extends State<NotificationPage> {
                   child: Text(
                     isSending ? "Sending" : "Send notify",
                     style: TextStyle(
-                      color: _g1.isConnected
+                      color: BleManager.get().isConnected
                           ? Colors.black
                           : Colors.grey,
                       fontSize: 16,

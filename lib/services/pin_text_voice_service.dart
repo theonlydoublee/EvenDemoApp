@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/controllers/pin_text_controller.dart';
 import 'package:get/get.dart';
 
@@ -59,7 +59,7 @@ class PinTextVoiceService {
                 
                 // Stop speech recognition after creating note
                 try {
-                  G1ManagerWrapper.invokeMethod("stopEvenAI");
+                  BleManager.invokeMethod("stopEvenAI");
                   print('${DateTime.now()} PinTextVoiceService: Stopped speech recognition after note creation');
                 } catch (e) {
                   print('${DateTime.now()} PinTextVoiceService: Error stopping speech recognition: $e');

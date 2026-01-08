@@ -1,4 +1,4 @@
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
 import 'package:demo_ai_even/controllers/pin_text_controller.dart';
 import 'package:demo_ai_even/controllers/weather_controller.dart';
@@ -18,9 +18,7 @@ void main() async {
   // Load environment variables from .env file
   await dotenv.load(fileName: ".env");
   
-  // Initialize G1 Manager (uses even_realities_g1 library)
-  await G1ManagerWrapper.instance.initialize();
-  
+  BleManager.get();
   Get.put(EvenaiModelController());
   Get.put(PinTextController());
   Get.put(WeatherController());
@@ -101,12 +99,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    final g1Manager = G1ManagerWrapper.instance;
+    final bleManager = BleManager.get();
     
     switch (state) {
       case AppLifecycleState.resumed:
         // App is in foreground
-        g1Manager.setAppInBackground(false);
+        bleManager.setAppInBackground(false);
         // Ensure weather auto-update is running if it was enabled
         try {
           final weatherController = Get.find<WeatherController>();
@@ -120,7 +118,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         break;
       case AppLifecycleState.paused:
         // App is in background
-        g1Manager.setAppInBackground(true);
+        bleManager.setAppInBackground(true);
         // Weather auto-update timer will continue running in background
         break;
       case AppLifecycleState.inactive:
@@ -129,11 +127,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         break;
       case AppLifecycleState.detached:
         // App is being terminated
-        g1Manager.setAppInBackground(true);
+        bleManager.setAppInBackground(true);
         break;
       case AppLifecycleState.hidden:
         // App is hidden (Android 14+)
-        g1Manager.setAppInBackground(true);
+        bleManager.setAppInBackground(true);
         break;
     }
   }

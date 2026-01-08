@@ -2,14 +2,14 @@
 
 import 'dart:async';
 
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:demo_ai_even/ble_manager.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/services/notification_service.dart';
+import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/controllers/pin_text_controller.dart';
 import 'package:demo_ai_even/views/even_list_page.dart';
 import 'package:demo_ai_even/views/features_page.dart';
 import 'package:demo_ai_even/views/notification_whitelist_page.dart';
-import 'package:even_realities_g1/even_realities_g1.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,24 +23,29 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   Timer? scanTimer;
+  bool isScanning = false;
   bool _notificationAccessEnabled = false;
-  
-  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
 
   @override
   void initState() {
     super.initState();
+    BleManager.get().setMethodCallHandler();
+    BleManager.get().startListening();
     
-    _g1.onStatusChanged = () {
+    // Sync with native service state on init
+    _syncWithNativeService();
+    
+    BleManager.get().onStatusChanged = () {
       _refreshPage();
       _checkNotificationPermission();
       // Start notification service when glasses connect
-      if (_g1.isConnected) {
+      if (BleManager.get().isConnected) {
         NotificationService.instance.startListening();
         // Enable dashboard mode when connected
         try {
           final pinTextController = Get.find<PinTextController>();
           pinTextController.isDashboardMode.value = true;
+          // Pinned note is just a UI marker - do NOT auto-send
         } catch (e) {
           print('PinTextController not found: $e');
         }
@@ -50,6 +55,16 @@ class _HomePageState extends State<HomePage> {
       }
     };
     _checkNotificationPermission();
+  }
+  
+  /// Sync Dart state with native service state
+  Future<void> _syncWithNativeService() async {
+    try {
+      // This will be called by BleManager internally, but we can also trigger it here
+      // The sync happens automatically when app comes to foreground
+    } catch (e) {
+      print('Error in sync: $e');
+    }
   }
 
   void _refreshPage() => setState(() {});
@@ -75,16 +90,12 @@ class _HomePageState extends State<HomePage> {
         await Future.delayed(const Duration(milliseconds: 500));
         
         print('Applying saved display type: $displayType');
-        // Use the library's dashboard feature
-        try {
-          final layout = displayType == 0 
-              ? G1DashboardLayout.full 
-              : (displayType == 1 ? G1DashboardLayout.dual : G1DashboardLayout.minimal);
-          await _g1.g1.dashboard.setLayout(layout);
+        final success = await Proto.setDashboardMode(modeId: displayType);
+        if (success) {
           final modeNames = ['Full', 'Dual', 'Minimal'];
           print('Successfully applied display type: ${modeNames[displayType]}');
-        } catch (e) {
-          print('Failed to apply saved display type: $e');
+        } else {
+          print('Failed to apply saved display type: $displayType');
         }
       }
     } catch (e) {
@@ -106,39 +117,40 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startScan() async {
+    setState(() => isScanning = true);
     try {
-      await _g1.startScan();
+      await BleManager.get().startScan();
       scanTimer?.cancel();
-      scanTimer = Timer(30.seconds, () {
+      scanTimer = Timer(15.seconds, () {
         _stopScan();
       });
     } catch (e) {
+      setState(() => isScanning = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error starting scan: $e')),
         );
       }
     }
-    _refreshPage();
   }
 
   Future<void> _stopScan() async {
-    if (_g1.isScanning) {
-      await _g1.stopScan();
+    if (isScanning) {
+      await BleManager.get().stopScan();
+      setState(() => isScanning = false);
     }
-    _refreshPage();
   }
 
   Widget blePairedList() => Expanded(
         child: ListView.separated(
           separatorBuilder: (context, index) => const SizedBox(height: 5),
-          itemCount: _g1.getPairedGlasses().length,
+          itemCount: BleManager.get().getPairedGlasses().length,
           itemBuilder: (context, index) {
-            final glasses = _g1.getPairedGlasses()[index];
+            final glasses = BleManager.get().getPairedGlasses()[index];
             return GestureDetector(
               onTap: () async {
                 String channelNumber = glasses['channelNumber']!;
-                await _g1.connectToGlasses(channelNumber);
+                await BleManager.get().connectToGlasses("Pair_$channelNumber");
                 _refreshPage();
               },
               child: Container(
@@ -157,7 +169,7 @@ class _HomePageState extends State<HomePage> {
                       children: [
                         Text('Pair: ${glasses['channelNumber']}'),
                         Text(
-                            'Left: ${glasses['leftName'] ?? 'Unknown'} \nRight: ${glasses['rightName'] ?? 'Unknown'}'),
+                            'Left: ${glasses['leftDeviceName']} \nRight: ${glasses['rightDeviceName']}'),
                       ],
                     ),
                   ],
@@ -199,21 +211,21 @@ class _HomePageState extends State<HomePage> {
             children: [
                   InkWell(
                     onTap: () async {
-                      final status = _g1.getConnectionStatus();
+                      final status = BleManager.get().getConnectionStatus();
                       final isConnecting = status.contains('Connecting');
-                      final hasFailed = status.contains('failed') || status.contains('timeout') || status.contains('error');
+                      final hasFailed = status.contains('failed') || status.contains('timeout');
                       
-                      if (hasFailed || (isConnecting && !_g1.isScanning)) {
+                      if (hasFailed || (isConnecting && !isScanning)) {
                         // Reset connection state to allow retry
-                        _g1.resetConnectionState();
+                        BleManager.get().resetConnectionState();
                         _refreshPage();
                         // Start scan again
-                        if (!_g1.isScanning) {
+                        if (!isScanning) {
                           _startScan();
                         }
-                      } else if (status == 'Not connected' && !_g1.isScanning) {
+                      } else if (status == 'Not connected' && !isScanning) {
                         _startScan();
-                      } else if (_g1.isScanning) {
+                      } else if (isScanning) {
                         _stopScan();
                       }
                     },
@@ -227,11 +239,11 @@ class _HomePageState extends State<HomePage> {
                   ),
                   alignment: Alignment.center,
                   child: () {
-                    final status = _g1.getConnectionStatus();
+                    final status = BleManager.get().getConnectionStatus();
                     final isConnecting = status.contains('Connecting');
-                    final hasFailed = status.contains('failed') || status.contains('timeout') || status.contains('error');
+                    final hasFailed = status.contains('failed') || status.contains('timeout');
                     
-                    if (_g1.isScanning) {
+                    if (isScanning) {
                       return const Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
@@ -375,12 +387,13 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               const SizedBox(height: 16),
-              if (_g1.getConnectionStatus() == 'Not connected')
+              if (BleManager.get().getConnectionStatus() == 'Not connected')
                 blePairedList(),
-              if (_g1.isConnected)
+              if (BleManager.get().isConnected)
                 Expanded(
                   child: GestureDetector(
                     onTap: () async {
+                      // todo
                       print("To AI History List...");
                       Navigator.push(
                         context,
@@ -404,12 +417,12 @@ class _HomePageState extends State<HomePage> {
                                     width: 50,
                                     height: 50,
                                     child: CircularProgressIndicator(),
-                                  )
+                                  ) // Color(0xFFFEF991)
                                 : Text(
                                     snapshot.data ?? "Loading...",
                                     style: TextStyle(
                                         fontSize: 14,
-                                        color: _g1.isConnected
+                                        color: BleManager.get().isConnected
                                             ? Colors.black
                                             : Colors.grey.withOpacity(0.5)),
                                     textAlign: TextAlign.center,
@@ -428,7 +441,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     scanTimer?.cancel();
-    _g1.onStatusChanged = null;
+    isScanning = false;
+    BleManager.get().onStatusChanged = null;
     super.dispose();
   }
 }

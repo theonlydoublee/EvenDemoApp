@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:demo_ai_even/g1_manager_wrapper.dart';
+import 'package:demo_ai_even/ble_manager.dart';
+import 'package:demo_ai_even/services/proto.dart';
 import 'package:demo_ai_even/services/evenai.dart';
 import 'package:demo_ai_even/views/features/notification/notify_model.dart';
 import 'package:flutter/services.dart';
@@ -318,8 +319,6 @@ class NotificationService {
     }
   }
 
-  G1ManagerWrapper get _g1 => G1ManagerWrapper.instance;
-
   /// Send notification to glasses
   Future<void> _sendNotificationToGlasses(NotifyModel notify, [Map<String, dynamic>? rawData]) async {
     final bool isCall = rawData?['is_call'] == true;
@@ -330,7 +329,7 @@ class NotificationService {
     // Always update UI to show notification (same place as AI responses)
     EvenAI.updateDynamicText(displayText);
     
-    if (!_g1.isConnected) {
+    if (!BleManager.get().isConnected) {
       print('NotificationService: Cannot send notification to glasses - glasses not connected');
       print('NotificationService: Notification displayed in UI: $displayText');
       return;
@@ -338,9 +337,9 @@ class NotificationService {
 
     try {
       // Double-check connection state
-      if (!_g1.isConnected) {
+      if (!BleManager.get().isConnected) {
         print('NotificationService: Connection check failed - isConnected = false');
-        print('NotificationService: Connection status: ${_g1.getConnectionStatus()}');
+        print('NotificationService: Connection status: ${BleManager.get().getConnectionStatus()}');
         EvenAI.updateDynamicText('$displayText\n\n⚠️ Cannot send - glasses not connected');
         return;
       }
@@ -348,38 +347,47 @@ class NotificationService {
       // Increment notification ID (wrap around at 255)
       _notificationId = (_notificationId + 1) % 256;
 
-      // Create G1NotificationModel using the library
-      String title = notify.title;
-      String message = notify.message;
-      String displayName = notify.displayName;
-      
-      if (isCall) {
-        title = 'Incoming Call';
-        if (message.isEmpty) {
-          message = displayName.isNotEmpty ? displayName : 'Unknown Caller';
+      final notifyMap = Map<String, dynamic>.from(notify.toMap());
+      if (rawData != null) {
+        if (rawData['category'] != null) {
+          notifyMap['category'] = rawData['category'];
         }
-        if (displayName.isEmpty) {
-          displayName = message.isNotEmpty ? message : 'Incoming Call';
+        if (rawData['call_notification'] == true) {
+          notifyMap['call_notification'] = true;
+        }
+        if (rawData['is_call'] == true) {
+          notifyMap['is_call'] = true;
+        }
+        if (rawData['caller_name_lookup'] != null) {
+          notifyMap['caller_name_lookup'] = rawData['caller_name_lookup'];
+        }
+      }
+      if (isCall) {
+        // For call notifications, the enriched notify should already have the correct structure
+        // The notify.toMap() above already populated all fields correctly from the enriched notify
+        // Just ensure title is "Incoming Call" and add call-specific flags
+        notifyMap['title'] = 'Incoming Call';
+        
+        // Ensure message and display_name are set (they should be from enrichment, but double-check)
+        if (notifyMap['message'] == null || (notifyMap['message'] as String).isEmpty) {
+          notifyMap['message'] = notifyMap['display_name'] ?? 'Unknown Caller';
+        }
+        if (notifyMap['display_name'] == null || (notifyMap['display_name'] as String).isEmpty) {
+          notifyMap['display_name'] = notifyMap['message'] ?? 'Incoming Call';
         }
         
-        print('NotificationService: Call notification payload - title: "$title", message: "$message", display_name: "$displayName", subtitle: "${notify.subTitle}"');
+        print('NotificationService: Call notification payload - title: "${notifyMap['title']}", message: "${notifyMap['message']}", display_name: "${notifyMap['display_name']}", subtitle: "${notifyMap['subtitle']}"');
       }
-      
       print('NotificationService: Sending notification to glasses');
       print('NotificationService: Notification ID: $_notificationId');
+      print('NotificationService: Notification data: $notifyMap');
       print('NotificationService: Display text: $displayText');
-      print('NotificationService: Connection status: ${_g1.getConnectionStatus()}');
+      print('NotificationService: Connection status: ${BleManager.get().getConnectionStatus()}');
       
-      // Send to glasses using library
-      try {
-        await _g1.g1.notifications.sendSimple(
-          appName: displayName.isNotEmpty ? displayName : 'App',
-          title: title,
-          message: message,
-          subtitle: notify.subTitle,
-          appIdentifier: notify.appIdentifier,
-        );
-        
+      // Send to glasses (now returns bool)
+      bool success = await Proto.sendNotify(notifyMap, _notificationId);
+      
+      if (success) {
         print('NotificationService: ✅ Notification sent successfully to glasses');
         // Update UI to confirm it was sent
         if (isCall) {
@@ -387,8 +395,8 @@ class NotificationService {
         } else {
           EvenAI.updateDynamicText('$displayText\n\n✅ Sent to glasses');
         }
-      } catch (e) {
-        print('NotificationService: ❌ Failed to send notification: $e');
+      } else {
+        print('NotificationService: ❌ Failed to send notification after retries');
         final failureSuffix = isCall
             ? '\n\n❌ Failed to send call to glasses (check connection)'
             : '\n\n❌ Failed to send to glasses (check connection)';
@@ -761,9 +769,33 @@ class NotificationService {
   }
 
   Future<void> _sendWhitelistToGlasses() async {
-    // Note: The library doesn't support whitelist sync to glasses
-    // Whitelist is managed locally in the app only
-    print('NotificationService: Whitelist updated locally (${_whitelistedApps.length} apps)');
+    if (!BleManager.get().isConnected) {
+      return;
+    }
+
+    try {
+      final apps = _whitelistedApps.map((id) => {
+            'id': id,
+            'name': _whitelistedAppNames[id] ?? id,
+          }).toList();
+
+      final payload = {
+        'calendar_enable': false,
+        'call_enable': true,
+        'msg_enable': true,
+        'ios_mail_enable': false,
+        'app': {
+          'list': apps,
+          'enable': apps.isNotEmpty,
+        },
+      };
+
+      final whitelistJson = jsonEncode(payload);
+      await Proto.sendNewAppWhiteListJson(whitelistJson);
+      print('NotificationService: Synced whitelist to glasses (${apps.length} apps, call_enable=true)');
+    } catch (e) {
+      print('NotificationService: Error sending whitelist to glasses: $e');
+    }
   }
 
   /// Load whitelist from shared preferences
